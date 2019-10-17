@@ -1,0 +1,176 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "",
+  "Parameters": {
+    "DomainName": {
+      "Description": "AWS Elasticsearch Domain Name",
+      "Type": "String"
+    },
+    "KeyName": {
+      "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type": "AWS::EC2::KeyPair::KeyName",
+      "ConstraintDescription": "Must be the name of an existing EC2 KeyPair."
+    },
+    "InstanceType": {
+      "Description": "AWS Elasticsearch Instance Type",
+      "Type": "String",
+      "Default": "t2.micro.elasticsearch",
+      "AllowedValues": [
+        "i3.2xlarge.elasticsearch", "m5.4xlarge.elasticsearch", "t3.xlarge.elasticsearch", "i3.4xlarge.elasticsearch",
+        "m3.large.elasticsearch", "r4.16xlarge.elasticsearch", "t2.micro.elasticsearch", "m4.large.elasticsearch",
+        "d2.2xlarge.elasticsearch", "t3.micro.elasticsearch", "m5.large.elasticsearch", "i3.8xlarge.elasticsearch",
+        "i3.large.elasticsearch", "d2.4xlarge.elasticsearch", "t2.small.elasticsearch", "c4.2xlarge.elasticsearch",
+        "t3.small.elasticsearch", "c5.2xlarge.elasticsearch", "c4.4xlarge.elasticsearch", "d2.8xlarge.elasticsearch",
+        "c5.4xlarge.elasticsearch", "m3.medium.elasticsearch", "c4.8xlarge.elasticsearch", "c4.large.elasticsearch",
+        "c5.xlarge.elasticsearch", "c5.large.elasticsearch", "c4.xlarge.elasticsearch", "c5.9xlarge.elasticsearch",
+        "d2.xlarge.elasticsearch", "t3.nano.elasticsearch", "t3.medium.elasticsearch", "t2.medium.elasticsearch",
+        "t3.2xlarge.elasticsearch", "c5.18xlarge.elasticsearch", "i3.xlarge"
+      ],
+      "ConstraintDescription": "Must be a valid Elasticsearch instance type."
+    },
+    "InstanceCount": {
+      "Description": "AWS Elasticsearch Instance Count",
+      "Type": "String",
+      "Default": "2",
+      "AllowedValues": [
+        "2",
+        "4"
+      ],
+      "ConstraintDescription": "You must choose an even number of data nodes for a two Availability Zone deployment"
+    },
+    "DedicatedMasterCount": {
+      "Description": "AWS Elasticsearch Dedicated Master Node Count",
+      "Type": "String",
+      "Default": "3",
+      "AllowedValues": [
+        "3",
+        "5"
+      ],
+      "ConstraintDescription": "Dedicated master node count should be an odd number to avoid split-brain."
+    },
+    "IdentityPoolArn": {
+      "Description": "AWS Cognito Identity Pool ARN",
+      "Type": "String",
+      "ConstraintDescription": "Must be a valid ARN"
+
+    },
+    "S3BucketName": {
+      "Description": "AWS S3 Bucket Name to be created as Elasticsearch datastore",
+      "Type": "String",
+      "ConstraintDescription": "Must be a unique S3 bucket name string"
+
+    },
+    "S3BucketLifecycleTransition": {
+      "Description": "AWS S3 Bucket Data Transition Period in Days",
+      "Type": "Number",
+      "Default": "30",
+      "MinValue": "30",
+      "MaxValue": "365",
+      "ConstraintDescription": "Must be between 30 and 365 days."
+    },
+    "S3BucketLifecycleExpiration": {
+      "Description": "AWS S3 Bucket Data Expiration Period in Days",
+      "Type": "Number",
+      "Default": "60",
+      "MinValue": "1",
+      "MaxValue": "365",
+      "ConstraintDescription": "Must be between 1 and 365 days."
+    }
+  },
+  "Resources": {
+
+    "ElasticsearchDomain": {
+      "Type": "AWS::Elasticsearch::Domain",
+      "Properties": {
+        "DomainName": { "Ref": "DomainName" },
+        "ElasticsearchClusterConfig": {
+          "DedicatedMasterEnabled": "true",
+          "InstanceCount": {
+            "Ref": "InstanceCount"
+          },
+          "ZoneAwarenessEnabled": "true",
+          "InstanceType": {
+            "Ref": "InstanceType"
+          },
+          "DedicatedMasterType": {
+            "Ref": "InstanceType"
+          },
+          "DedicatedMasterCount": {
+            "Ref": "DedicatedMasterCount"
+          }
+        },
+        "EBSOptions": {
+          "EBSEnabled": true,
+          "Iops": 0,
+          "VolumeSize": 20,
+          "VolumeType": "gp2"
+        },
+        "SnapshotOptions": {
+          "AutomatedSnapshotStartHour": "0"
+        },
+        "AccessPolicies": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": { "Ref": "IdentityPoolArn"  }
+              },
+              "Action": "es:*",
+              "Resource": {
+                "Fn::Join" : [ "", [
+                    "arn:aws:es:",
+                    { "Ref" : "AWS::Region" },
+                    ":",
+                    { "Ref" : "AWS::AccountId" },
+                    ":domain/",
+                    { "Ref": "DomainName" },
+                    "/*"
+                  ]
+                ]
+              },
+              "Condition": {
+                "IpAddress": {
+                  "aws:SourceIp": [
+                    "64.39.96.0/20",
+                    "52.27.190.0/23"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "AdvancedOptions": {
+          "rest.action.multi.allow_explicit_index": "true"
+        }
+      }
+    },
+
+    "DataS3Bucket": {
+      "Type" : "AWS::S3::Bucket",
+      "Properties" : {
+        "BucketName" : { "Ref": "S3BucketName" },
+        "LifecycleConfiguration" : {
+          "Rules": [
+            {
+              "Id": "StandardIARule",
+              "Status": "Enabled",
+              "ExpirationInDays": { "Ref": "S3BucketLifecycleExpiration" },
+              "Transitions": [
+                {
+                  "TransitionInDays": { "Ref": "S3BucketLifecycleTransition" },
+                  "StorageClass": "Standard-IA"
+                }
+              ]
+
+            }
+          ]
+        }
+      }
+    }
+
+  }
+
+
+
+}
