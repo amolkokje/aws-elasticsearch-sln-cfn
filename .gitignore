@@ -1,0 +1,6 @@
+*.zip
+*.pyc
+.idea
+.DS_Store
+packages/*
+lambda/*venv*

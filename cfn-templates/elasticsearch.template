@@ -4,7 +4,9 @@
   "Parameters": {
     "DomainName": {
       "Description": "AWS Elasticsearch Domain Name",
-      "Type": "String"
+      "Type": "String",
+      "Default": "test"
+
     },
     "KeyName": {
       "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instances",
@@ -50,6 +52,7 @@
     },
     "IdentityPoolArn": {
       "Description": "AWS Cognito Identity Pool ARN",
+      "Default": "dummy-arn",
       "Type": "String",
       "ConstraintDescription": "Must be a valid ARN"
 
@@ -75,76 +78,22 @@
       "MinValue": "1",
       "MaxValue": "365",
       "ConstraintDescription": "Must be between 1 and 365 days."
+    },
+    "LambdaSourceBucket": {
+      "Description": "AWS S3 Bucket in the Region which contains the Lambda Functions",
+      "Type": "String",
+      "Default": "elasticsearch-lambda-functions",
+      "ConstraintDescription": "Must be a valid bucket name containing Lambda functions, and in the same region."
+    },
+    "LambdaSourceBucketPrefix": {
+      "Description": "AWS S3 Bucket Prefix containing Lambda Functions",
+      "Type": "String",
+      "Default": "",
+      "ConstraintDescription": "Bucket prefix that contains the lambda functions."
     }
+
   },
   "Resources": {
-
-    "ElasticsearchDomain": {
-      "Type": "AWS::Elasticsearch::Domain",
-      "Properties": {
-        "DomainName": { "Ref": "DomainName" },
-        "ElasticsearchClusterConfig": {
-          "DedicatedMasterEnabled": "true",
-          "InstanceCount": {
-            "Ref": "InstanceCount"
-          },
-          "ZoneAwarenessEnabled": "true",
-          "InstanceType": {
-            "Ref": "InstanceType"
-          },
-          "DedicatedMasterType": {
-            "Ref": "InstanceType"
-          },
-          "DedicatedMasterCount": {
-            "Ref": "DedicatedMasterCount"
-          }
-        },
-        "EBSOptions": {
-          "EBSEnabled": true,
-          "Iops": 0,
-          "VolumeSize": 20,
-          "VolumeType": "gp2"
-        },
-        "SnapshotOptions": {
-          "AutomatedSnapshotStartHour": "0"
-        },
-        "AccessPolicies": {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Effect": "Allow",
-              "Principal": {
-                "AWS": { "Ref": "IdentityPoolArn"  }
-              },
-              "Action": "es:*",
-              "Resource": {
-                "Fn::Join" : [ "", [
-                    "arn:aws:es:",
-                    { "Ref" : "AWS::Region" },
-                    ":",
-                    { "Ref" : "AWS::AccountId" },
-                    ":domain/",
-                    { "Ref": "DomainName" },
-                    "/*"
-                  ]
-                ]
-              },
-              "Condition": {
-                "IpAddress": {
-                  "aws:SourceIp": [
-                    "64.39.96.0/20",
-                    "52.27.190.0/23"
-                  ]
-                }
-              }
-            }
-          ]
-        },
-        "AdvancedOptions": {
-          "rest.action.multi.allow_explicit_index": "true"
-        }
-      }
-    },
 
     "DataS3Bucket": {
       "Type" : "AWS::S3::Bucket",
@@ -167,8 +116,90 @@
           ]
         }
       }
-    }
+    },
 
+    "LambdaZipsBucket": {
+      "Type": "AWS::S3::Bucket"
+    },
+
+    "CopyZips": {
+      "Type": "Custom::CopyZips",
+      "Properties": {
+        "ServiceToken": { "GetAtt": "CopyZipsFunction.Arn" },
+        "DestBucket": { "Ref": "LambdaZipsBucket" },
+        "SourceBucket": "elasticsearch-lambda-functions",
+        "Prefix": "",
+        "Objects": [
+          "test_function.zip"
+        ]
+      }
+    },
+
+    "CopyZipsRole":{
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "lambda.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole"
+          },
+          "ManagedPolicyArns": [
+            "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          ],
+          "Path": "/",
+          "Policies": [
+            {
+              "PolicyName": "lambda-copier",
+              "PolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                      "Effect": "Allow",
+                      "Action": [
+                        "s3:GetObject"
+                      ],
+                      "Resource": {
+                        "Sub": "arn:aws:s3:::${LambdaSourceBucket}/${LambdaSourceBucketPrefix}*"
+                      }
+                    },
+                  {
+                    "Effect": "Allow",
+                    "Action": [
+                      "s3:PutObject",
+                      "s3:DeleteObject"
+                    ],
+                    "Resource": { "Sub": "arn:aws:s3:::${LambdaZipsBucket}/${LambdaSourceBucketPrefix}*" }
+                  }
+
+                ]
+
+              }
+            }
+          ]
+        }
+      }
+
+
+    },
+
+    "CopyZipsFunction":{
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Description": "Copies objects from Source to Destination S3 bucket",
+        "Handler": "index.handler",
+        "Runtime": "python2.7",
+        "Role": { "GetAtt": "CopyZipsRole.Arn" },
+        "Timeout": 240,
+        "Code": {
+          "ZipFile": ""
+        }
+      }
+
+    }
   }
 
 

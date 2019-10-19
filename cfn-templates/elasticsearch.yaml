@@ -1,0 +1,260 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: ''
+
+
+Parameters:
+  DomainName:
+    Description: AWS Elasticsearch Domain Name
+    Type: String
+    Default: test
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+  InstanceType:
+    Description: AWS Elasticsearch Instance Type
+    Type: String
+    Default: t2.micro.elasticsearch
+    AllowedValues:
+      - i3.2xlarge.elasticsearch
+      - m5.4xlarge.elasticsearch
+      - t3.xlarge.elasticsearch
+      - i3.4xlarge.elasticsearch
+      - m3.large.elasticsearch
+      - r4.16xlarge.elasticsearch
+      - t2.micro.elasticsearch
+      - m4.large.elasticsearch
+      - d2.2xlarge.elasticsearch
+      - t3.micro.elasticsearch
+      - m5.large.elasticsearch
+      - i3.8xlarge.elasticsearch
+      - i3.large.elasticsearch
+      - d2.4xlarge.elasticsearch
+      - t2.small.elasticsearch
+      - c4.2xlarge.elasticsearch
+      - t3.small.elasticsearch
+      - c5.2xlarge.elasticsearch
+      - c4.4xlarge.elasticsearch
+      - d2.8xlarge.elasticsearch
+      - c5.4xlarge.elasticsearch
+      - m3.medium.elasticsearch
+      - c4.8xlarge.elasticsearch
+      - c4.large.elasticsearch
+      - c5.xlarge.elasticsearch
+      - c5.large.elasticsearch
+      - c4.xlarge.elasticsearch
+      - c5.9xlarge.elasticsearch
+      - d2.xlarge.elasticsearch
+      - t3.nano.elasticsearch
+      - t3.medium.elasticsearch
+      - t2.medium.elasticsearch
+      - t3.2xlarge.elasticsearch
+      - c5.18xlarge.elasticsearch
+      - i3.xlarge
+    ConstraintDescription: Must be a valid Elasticsearch instance type.
+  InstanceCount:
+    Description: AWS Elasticsearch Instance Count
+    Type: String
+    Default: '2'
+    AllowedValues:
+      - '2'
+      - '4'
+    ConstraintDescription: >-
+      You must choose an even number of data nodes for a two Availability Zone
+      deployment
+  DedicatedMasterCount:
+    Description: AWS Elasticsearch Dedicated Master Node Count
+    Type: String
+    Default: '3'
+    AllowedValues:
+      - '3'
+      - '5'
+    ConstraintDescription: Dedicated master node count should be an odd number to avoid split-brain.
+  IdentityPoolArn:
+    Description: AWS Cognito Identity Pool ARN
+    Default: dummy-arn
+    Type: String
+    ConstraintDescription: Must be a valid ARN
+  DataBucketName:
+    Description: AWS S3 Bucket Name to be created as Elasticsearch datastore
+    Type: String
+    ConstraintDescription: Must be a unique S3 bucket name string
+  DataBucketLifecycleTransition:
+    Description: AWS S3 Bucket Data Transition Period in Days
+    Type: Number
+    Default: '30'
+    MinValue: '30'
+    MaxValue: '365'
+    ConstraintDescription: Must be between 30 and 365 days.
+  DataBucketLifecycleExpiration:
+    Description: AWS S3 Bucket Data Expiration Period in Days
+    Type: Number
+    Default: '60'
+    MinValue: '1'
+    MaxValue: '365'
+    ConstraintDescription: Must be between 1 and 365 days.
+  LambdaSourceBucket:
+    Description: AWS S3 Bucket in the Region which contains the Lambda Functions
+    Type: String
+    Default: elasticsearch-lambda-functions
+    ConstraintDescription: >-
+      Must be a valid bucket name containing Lambda functions, and in the same
+      region.
+  LambdaSourceBucketPrefix:
+    Description: AWS S3 Bucket Prefix containing Lambda Functions
+    Type: String
+    Default: ''
+    ConstraintDescription: Bucket prefix that contains the lambda functions.
+
+
+Resources:
+
+
+  DataBucket:
+    Type: 'AWS::S3::Bucket'
+    DependsOn:
+      - ProcessingLambdaPermission
+    Properties:
+      BucketName: !Ref DataBucketName
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt 'CopyZipsFunction.Arn'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .json
+      LifecycleConfiguration:
+        Rules:
+          - Id: StandardIARule
+            Status: Enabled
+            ExpirationInDays: !Ref DataBucketLifecycleExpiration
+            Transitions:
+              - TransitionInDays: !Ref DataBucketLifecycleTransition
+                StorageClass: STANDARD_IA
+
+  ProcessingLambdaPermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        Action: 'lambda:InvokeFunction'
+        FunctionName: !Ref CopyZipsFunction
+        Principal: s3.amazonaws.com
+        SourceArn: !Sub 'arn:aws:s3:::${DataBucket}'
+        SourceAccount: !Ref AWS::AccountId
+
+
+  LambdaZipsBucket:
+    Type: 'AWS::S3::Bucket'
+
+
+  CopyZips:
+    Type: 'Custom::CopyZips'
+    Properties:
+      ServiceToken: !GetAtt 'CopyZipsFunction.Arn'
+      DestBucket: !Ref 'LambdaZipsBucket'
+      SourceBucket: elasticsearch-lambda-functions
+      Prefix: ''
+      Objects:
+        - index_data.zip
+        - delete_data.zip
+
+
+  CopyZipsFunctionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: lambda-copier
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${LambdaSourceBucket}/${LambdaSourceBucketPrefix}*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${LambdaZipsBucket}*'
+
+
+  CopyZipsFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Description: Copies objects from Source to Destination S3 bucket
+      Handler: index.handler
+      Runtime: python2.7
+      Role: !GetAtt 'CopyZipsFunctionRole.Arn'
+      Timeout: 240
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          import threading
+          import boto3
+          import cfnresponse
+
+          def copy_objects(source_bucket, dest_bucket, prefix, objects):
+              s3 = boto3.client('s3')
+              for o in objects:
+                  key = prefix + o
+                  copy_source = {
+                      'Bucket': source_bucket,
+                      'Key': key
+                  }
+                  print('copy_source: %s' % copy_source)
+                  print('dest_bucket = %s'%dest_bucket)
+                  print('key = %s' %key)
+                  s3.copy_object(CopySource=copy_source, Bucket=dest_bucket,
+                        Key=key)
+
+          def delete_objects(bucket, prefix, objects):
+              s3 = boto3.client('s3')
+              objects = {'Objects': [{'Key': prefix + o} for o in objects]}
+              s3.delete_objects(Bucket=bucket, Delete=objects)
+
+          def timeout(event, context):
+              logging.error('Execution is about to time out, sending failure response to CloudFormation')
+              cfnresponse.send(event, context, cfnresponse.FAILED, {}, None)
+
+          def handler(event, context):
+              # make sure we send a failure to CloudFormation if the function
+              # is going to timeout
+              timer = threading.Timer((context.get_remaining_time_in_millis()
+                        / 1000.00) - 0.5, timeout, args=[event, context])
+              timer.start()
+              print('Received event: %s' % json.dumps(event))
+              status = cfnresponse.SUCCESS
+              try:
+                  source_bucket = event['ResourceProperties']['SourceBucket']
+                  dest_bucket = event['ResourceProperties']['DestBucket']
+                  prefix = event['ResourceProperties']['Prefix']
+                  objects = event['ResourceProperties']['Objects']
+                  if event['RequestType'] == 'Delete':
+                      delete_objects(dest_bucket, prefix, objects)
+                  else:
+                      copy_objects(source_bucket, dest_bucket, prefix, objects)
+              except Exception as e:
+                  logging.error('Exception: %s' % e, exc_info=True)
+                  status = cfnresponse.FAILED
+              finally:
+                  timer.cancel()
+                  cfnresponse.send(event, context, status, {}, None)
+
+
+
+
+
+
