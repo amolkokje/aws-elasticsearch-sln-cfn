@@ -1,8 +1,8 @@
 # REF: https://aws.amazon.com/blogs/infrastructure-and-automation/deploying-aws-lambda-functions-using-aws-cloudformation-the-portable-way/
+# https://raw.githubusercontent.com/aws-quickstart/quickstart-examples/develop/patterns/LambdaZips/example.yaml
 
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'Example Lambda zip copy'
-
 
 Parameters:
   QSS3BucketName:
@@ -14,9 +14,11 @@ Parameters:
 
 Resources:
 
+  # Bucket that will eventually contain lambda zips used for creating lambda function
   LambdaZipsBucket:
     Type: AWS::S3::Bucket
 
+  # Custom Resource: Used to copy all specified lambda zip packages in the 'Objects' list to the LambdaZipsBucket
   CopyZips:
     Type: Custom::CopyZips
     Properties:
@@ -27,6 +29,10 @@ Resources:
       Objects:
         - test_function.zip
 
+  # CopyZips lambda function role
+  # - basic execution role
+  # - permission to get object from bucket where all lambda zips are stored
+  # - permission to put/delete into the bucket which is used to create the lambda function
   CopyZipsRole:
     Type: AWS::IAM::Role
     Properties:
@@ -57,6 +63,8 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:s3:::${LambdaZipsBucket}/${QSS3KeyPrefix}*'
 
+  # Lambda function used by the Custom-Resource CopyZips to copy over the lambda functions to bucket used by stack
+  # to create the lambda functions
   CopyZipsFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -125,6 +133,7 @@ Resources:
                   timer.cancel()
                   cfnresponse.send(event, context, status, {}, None)
 
+  # Role for actual lambda functions to be deployed by the stack
   MyFunctionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -138,6 +147,10 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
+  # Lambda function deployed by the stack
+  # Notice the DependsOn key pointing to our CopyZips custom resource. By default, AWS CloudFormation will attempt
+  # to launch resources that are not dependent on each other in parallel, so this is required to be sure that the zips
+  # have already been copied before our Lambda function is created.
   MyFunction:
     DependsOn: CopyZips
     Type: AWS::Lambda::Function

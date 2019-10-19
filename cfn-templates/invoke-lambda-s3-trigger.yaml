@@ -1,8 +1,27 @@
+# REF: https://www.itonaut.com/2018/10/03/implement-s3-bucket-lambda-triggers-in-aws-cloudformation/
+# https://gist.githubusercontent.com/LukasMusebrink/30b72b4d739b470fe6f073b9126a8ab6/raw/c6014246fa340823ae0f7a5ff121d182e76a823c/template.yaml
+
 AWSTemplateFormatVersion : 2010-09-09
+
+# Implement S3 Bucket Lambda triggers in AWS CloudFormation can be quite tricky because of very often circular dependencies
+
+# ** First, you have to specify a name for the Bucket in the CloudFormation template, this allows you to create
+# policies and permission without worrying about circular dependencies.
+
+# ** Secondly, you have to add a DependsOn statement to the Bucket referencing the Lambda Permission, this helps you
+# to fix “Unable to validate the following destination configurations” errors since the bucket will only
+# get created if the Lambda Function and all necessary policies, roles and permissions are in place.
+
+
 Parameters:
   BucketName:
     Type: String
+
 Resources:
+
+  # Bucket which sends event notifications, that are later acted on by Lambda
+  # Notice that it works little different in Cfn as opposed to Console where you can add trigger from the Lambda function page.
+  # Note: DependsOn
   Bucket:
     Type: AWS::S3::Bucket
     DependsOn:
@@ -19,6 +38,7 @@ Resources:
                 - Name: suffix
                   Value: .txt
 
+  # ??
   ProcessingLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -28,6 +48,7 @@ Resources:
       SourceArn: !Sub 'arn:aws:s3:::${BucketName}'
       SourceAccount: !Ref AWS::AccountId
 
+  # Lambda function role - ??
   ProcessingLambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -59,6 +80,7 @@ Resources:
               - s3:DeleteObject
               Resource:  !Sub 'arn:aws:s3:::${BucketName}/*'
 
+  # Lambda function
   ProcessingLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:

@@ -110,6 +110,8 @@ Parameters:
 Resources:
 
 
+  # Bucket to Store ES Data
+
   DataBucket:
     Type: 'AWS::S3::Bucket'
     DependsOn:
@@ -133,6 +135,8 @@ Resources:
             Transitions:
               - TransitionInDays: !Ref DataBucketLifecycleTransition
                 StorageClass: STANDARD_IA
+
+  #
 
   ProcessingLambdaPermission:
       Type: AWS::Lambda::Permission
