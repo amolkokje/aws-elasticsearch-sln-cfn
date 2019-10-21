@@ -6,11 +6,13 @@ Parameters:
   DomainName:
     Description: AWS Elasticsearch Domain Name
     Type: String
-    Default: test
   #KeyName:
   #  Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
   #  Type: 'AWS::EC2::KeyPair::KeyName'
   #  ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+
+  # Elasticsearch configuration
+
   InstanceType:
     Description: AWS Elasticsearch Instance Type
     Type: String
@@ -70,11 +72,17 @@ Parameters:
       - '3'
       - '5'
     ConstraintDescription: Dedicated master node count should be an odd number to avoid split-brain.
+
+  # Cognito Authentication
+
   IdentityPoolArn:
     Description: AWS Cognito Identity Pool ARN
-    Default: dummy-arn
+    Default: 'arn:aws:iam::697987864314:role/Cognito_myidentitypoolAuth_Role'
     Type: String
     ConstraintDescription: Must be a valid ARN
+
+  # Data Bucket
+
   DataBucketName:
     Description: AWS S3 Bucket Name to be created as Elasticsearch datastore
     Type: String
@@ -93,6 +101,9 @@ Parameters:
     MinValue: '1'
     MaxValue: '365'
     ConstraintDescription: Must be between 1 and 365 days.
+
+  # Lambda Function
+
   LambdaSourceBucket:
     Description: AWS S3 Bucket in the Region which contains the Lambda Functions
     Type: String
@@ -108,6 +119,44 @@ Parameters:
 
 
 Resources:
+
+  #######################################################
+  ### Elasticsearch Domain
+  #######################################################
+
+  ElasticsearchDomain:
+    Type: AWS::Elasticsearch::Domain
+    Properties:
+      DomainName: !Ref DomainName
+      ElasticsearchClusterConfig:
+        DedicatedMasterEnabled: "true"
+        InstanceCount: !Ref InstanceCount
+        ZoneAwarenessEnabled: "true"
+        InstanceType: !Ref InstanceType
+        DedicatedMasterType: !Ref InstanceType
+        DedicatedMasterCount: !Ref DedicatedMasterCount
+      EBSOptions:
+        EBSEnabled: true
+        Iops: 0
+        VolumeSize: 20
+        VolumeType: "gp2"
+      SnapshotOptions:
+        AutomatedSnapshotStartHour: "0"
+      AccessPolicies:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              AWS: !Ref 'IdentityPoolArn'
+            Action: 'es:ESHttp*'
+            Resource: !Sub 'arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${DomainName}/*'
+            Condition:
+              IpAddress:
+                aws:SourceIp:
+                  - 64.39.96.0/20
+                  - 52.27.190.0/23
+      AdvancedOptions:
+        rest.action.multi.allow_explicit_index: "true"
 
   #######################################################
   ### Bucket to Store ES Data
@@ -317,18 +366,29 @@ Resources:
             Principal:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
+      Policies:
+        - PolicyName: 'lambda-es-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action: 'es:*'
+                Resource: '*'
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSLambdaExecute
+
 
   # Lambda function deployed by the stack
   # Notice the DependsOn key pointing to our CopyZips custom resource. By default, AWS CloudFormation will attempt
   # to launch resources that are not dependent on each other in parallel, so this is required to be sure that the zips
   # have already been copied before our Lambda function is created.
   IndexDataFunction:
-    DependsOn: CopyZips
+    DependsOn:
+      - CopyZips
+      - ElasticsearchDomain
     Type: AWS::Lambda::Function
     Properties:
-      Description: Example
+      Description: 'Lambda function to index data to ES when object is added to S3'
       Handler: index_data.lambda_handler
       Runtime: python2.7
       Role: !GetAtt 'IndexDataFunctionRole.Arn'
@@ -336,6 +396,11 @@ Resources:
       Code:
         S3Bucket: !Ref 'LambdaZipsBucket'
         S3Key: !Sub '${LambdaSourceBucketPrefix}index_data.zip'
+      Environment:
+        Variables:
+          'ES_ENDPOINT_HOST': !GetAtt ElasticsearchDomain.DomainEndpoint
+          'ES_ENDPOINT_PORT': '443'
+          'REGION': !Sub '${AWS::Region}'
 
   ### DeleteData - function that deletes data from ES when object is deleted from S3
 
@@ -349,14 +414,22 @@ Resources:
             Principal:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
+      Policies:
+        - PolicyName: 'lambda-es-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action: 'es:*'
+                Resource: '*'
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSLambdaExecute
 
   DeleteDataFunction:
     DependsOn: CopyZips
     Type: AWS::Lambda::Function
     Properties:
-      Description: Example
+      Description: 'Lambda function to delete data from ES when object is removed from S3 bucket'
       Handler: delete_data.lambda_handler
       Runtime: python2.7
       Role: !GetAtt 'DeleteDataFunctionRole.Arn'
@@ -364,3 +437,8 @@ Resources:
       Code:
         S3Bucket: !Ref 'LambdaZipsBucket'
         S3Key: !Sub '${LambdaSourceBucketPrefix}delete_data.zip'
+      Environment:
+        Variables:
+          'ES_ENDPOINT_HOST': !GetAtt ElasticsearchDomain.DomainEndpoint
+          'ES_ENDPOINT_PORT': '443'
+          'REGION': !Sub '${AWS::Region}'

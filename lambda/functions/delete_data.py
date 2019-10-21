@@ -5,13 +5,37 @@ from elasticsearch import Elasticsearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
 import boto3
 
-aws_es_endpoint = 'search-ipesdomain-e2x7tyfwfiqxxmwy7a5s34ksqe.us-east-1.es.amazonaws.com'
 
+def es_init():
+    service = 'es'
+    credentials = boto3.Session().get_credentials()
+    awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, os.environ['REGION'],
+                       service, session_token=credentials.token)
+
+    es_client = Elasticsearch( hosts=[{'host': os.environ['ES_ENDPOINT_HOST'],
+                                       'port': int(os.environ['ES_ENDPOINT_PORT'])}],
+                               http_auth=awsauth,
+                               use_ssl=True,
+                               verify_certs=True,
+                               connection_class=RequestsHttpConnection)
+    print 'AMOL-: SIGN: ES Init Done! Instance={}'.format(es_client)
+
+    try:
+        print 'AMOL-: SIGN: Indices={}'.format(es_client.indices.get_alias().keys())
+        print 'AMOL-: SIGN: Indice Query PASS'
+    except:
+        print 'AMOL-: SIGN: Indice Query FAIL'
 
 def lambda_handler(event, context):
     print 'AMOL: event={}'.format(event)
     print 'AMOL: context={}'.format(context)
     print 'AMOL: ---> DELETE <---'
+
+    print 'ENVIRONMENT VARS:'
+    for k, v in os.environ.iteritems():
+        print '{}: [{}]'.format(k, v)
+
+    es_init()
 
 
 if __name__ == '__main__':
