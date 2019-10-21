@@ -38,7 +38,8 @@ Resources:
                 - Name: suffix
                   Value: .txt
 
-  # ??
+  # Grants S3 bucket permission to invoke the lambda function. Need to specify the ARN of the bucket. Also, need
+  # the account ID if its an AWS service.
   ProcessingLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -48,7 +49,7 @@ Resources:
       SourceArn: !Sub 'arn:aws:s3:::${BucketName}'
       SourceAccount: !Ref AWS::AccountId
 
-  # Lambda function role - ??
+  # Lambda function role to allow it to write to logs, and get/delete objects from S3
   ProcessingLambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:

@@ -113,27 +113,62 @@ Resources:
   ### Bucket to Store ES Data
   #######################################################
 
-#  DataBucket:
-#    Type: 'AWS::S3::Bucket'
-#    Properties:
-#      BucketName: !Ref DataBucketName
-#      NotificationConfiguration:
-#        LambdaConfigurations:
-#          - Event: s3:ObjectCreated:*
-#            Function: !GetAtt 'CopyZipsFunction.Arn'
-#            Filter:
-#              S3Key:
-#                Rules:
-#                  - Name: suffix
-#                    Value: .json
-#      LifecycleConfiguration:
-#        Rules:
-#          - Id: StandardIARule
-#            Status: Enabled
-#            ExpirationInDays: !Ref DataBucketLifecycleExpiration
-#            Transitions:
-#              - TransitionInDays: !Ref DataBucketLifecycleTransition
-#                StorageClass: STANDARD_IA
+  # Note the DependsOn. This ensures that CFN does not try to create the resources in parallel, and hence fail.
+  # DependsOn section will enforce a sequence thus creating the Lambda functions, permissions, etc before
+  # trying to create the bucket, so that it is able to use those resources to configure event notifications.
+  DataBucket:
+    Type: 'AWS::S3::Bucket'
+    DependsOn:
+      - IndexDataLambdaInvokePermission
+      - DeleteDataLambdaInvokePermission
+    Properties:
+      BucketName: !Ref 'DataBucketName'
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt 'IndexDataFunction.Arn'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .json
+          - Event: s3:ObjectRemoved:*
+            Function: !GetAtt 'DeleteDataFunction.Arn'
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .json
+      #LifecycleConfiguration:
+      #  Rules:
+      #    - Id: StandardIARule
+      #      Status: Enabled
+      #      ExpirationInDays: !Ref DataBucketLifecycleExpiration
+      #      Transitions:
+      #        - TransitionInDays: !Ref DataBucketLifecycleTransition
+      #          StorageClass: STANDARD_IA
+
+
+  # Grants S3 bucket permission to invoke the lambda function. Need to specify the ARN of the bucket. Also, need
+  # the account ID if its an AWS service.
+  IndexDataLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref IndexDataFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub 'arn:aws:s3:::${DataBucketName}'
+      SourceAccount: !Ref AWS::AccountId
+
+  DeleteDataLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref DeleteDataFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub 'arn:aws:s3:::${DataBucketName}'
+      SourceAccount: !Ref AWS::AccountId
+
 
 
   #######################################################
