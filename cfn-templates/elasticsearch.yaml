@@ -1,5 +1,5 @@
-AWSTemplateFormatVersion: 2010-09-09
-Description: ''
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'mydemo'
 
 
 Parameters:
@@ -7,10 +7,10 @@ Parameters:
     Description: AWS Elasticsearch Domain Name
     Type: String
     Default: test
-  KeyName:
-    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
-    Type: 'AWS::EC2::KeyPair::KeyName'
-    ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+  #KeyName:
+  #  Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+  #  Type: 'AWS::EC2::KeyPair::KeyName'
+  #  ConstraintDescription: Must be the name of an existing EC2 KeyPair.
   InstanceType:
     Description: AWS Elasticsearch Instance Type
     Type: String
@@ -109,73 +109,74 @@ Parameters:
 
 Resources:
 
+  #######################################################
+  ### Bucket to Store ES Data
+  #######################################################
 
-  # Bucket to Store ES Data
-
-  DataBucket:
-    Type: 'AWS::S3::Bucket'
-    DependsOn:
-      - ProcessingLambdaPermission
-    Properties:
-      BucketName: !Ref DataBucketName
-      NotificationConfiguration:
-        LambdaConfigurations:
-          - Event: s3:ObjectCreated:*
-            Function: !GetAtt 'CopyZipsFunction.Arn'
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: suffix
-                    Value: .json
-      LifecycleConfiguration:
-        Rules:
-          - Id: StandardIARule
-            Status: Enabled
-            ExpirationInDays: !Ref DataBucketLifecycleExpiration
-            Transitions:
-              - TransitionInDays: !Ref DataBucketLifecycleTransition
-                StorageClass: STANDARD_IA
-
-  #
-
-  ProcessingLambdaPermission:
-      Type: AWS::Lambda::Permission
-      Properties:
-        Action: 'lambda:InvokeFunction'
-        FunctionName: !Ref CopyZipsFunction
-        Principal: s3.amazonaws.com
-        SourceArn: !Sub 'arn:aws:s3:::${DataBucket}'
-        SourceAccount: !Ref AWS::AccountId
+#  DataBucket:
+#    Type: 'AWS::S3::Bucket'
+#    Properties:
+#      BucketName: !Ref DataBucketName
+#      NotificationConfiguration:
+#        LambdaConfigurations:
+#          - Event: s3:ObjectCreated:*
+#            Function: !GetAtt 'CopyZipsFunction.Arn'
+#            Filter:
+#              S3Key:
+#                Rules:
+#                  - Name: suffix
+#                    Value: .json
+#      LifecycleConfiguration:
+#        Rules:
+#          - Id: StandardIARule
+#            Status: Enabled
+#            ExpirationInDays: !Ref DataBucketLifecycleExpiration
+#            Transitions:
+#              - TransitionInDays: !Ref DataBucketLifecycleTransition
+#                StorageClass: STANDARD_IA
 
 
+  #######################################################
+  ### Bucket which contains Lambda zips
+  #######################################################
+
+  # Bucket that will eventually contain lambda zips used for creating lambda function
   LambdaZipsBucket:
-    Type: 'AWS::S3::Bucket'
+    Type: AWS::S3::Bucket
 
+  #######################################################
+  ### Logic for deploying Lambda functions
+  #######################################################
 
+  # Custom Resource: Used to copy all specified lambda zip packages in the 'Objects' list to the LambdaZipsBucket
   CopyZips:
-    Type: 'Custom::CopyZips'
+    Type: Custom::CopyZips
     Properties:
       ServiceToken: !GetAtt 'CopyZipsFunction.Arn'
       DestBucket: !Ref 'LambdaZipsBucket'
-      SourceBucket: elasticsearch-lambda-functions
-      Prefix: ''
+      SourceBucket: !Ref 'LambdaSourceBucket'
+      Prefix: !Ref 'LambdaSourceBucketPrefix'
       Objects:
         - index_data.zip
         - delete_data.zip
 
-
+  # CopyZips lambda function role
+  # - basic execution role
+  # - permission to get object from bucket where all lambda zips are stored
+  # - permission to put/delete into the bucket which is used to create the lambda function
   CopyZipsFunctionRole:
-    Type: 'AWS::IAM::Role'
+    Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
-          Effect: Allow
-          Principal:
-            Service: lambda.amazonaws.com
-          Action: sts:AssumeRole
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Path: /
       Policies:
         - PolicyName: lambda-copier
           PolicyDocument:
@@ -191,13 +192,15 @@ Resources:
                   - s3:PutObject
                   - s3:DeleteObject
                 Resource:
-                  - !Sub 'arn:aws:s3:::${LambdaZipsBucket}*'
+                  - !Sub 'arn:aws:s3:::${LambdaZipsBucket}/${LambdaSourceBucketPrefix}*'
 
 
+  # Lambda function used by the Custom-Resource CopyZips to copy over the lambda functions to bucket used by stack
+  # to create the lambda functions
   CopyZipsFunction:
-    Type: 'AWS::Lambda::Function'
+    Type: AWS::Lambda::Function
     Properties:
-      Description: Copies objects from Source to Destination S3 bucket
+      Description: Copies objects from a source S3 bucket to a destination
       Handler: index.handler
       Runtime: python2.7
       Role: !GetAtt 'CopyZipsFunctionRole.Arn'
@@ -209,6 +212,7 @@ Resources:
           import threading
           import boto3
           import cfnresponse
+
 
           def copy_objects(source_bucket, dest_bucket, prefix, objects):
               s3 = boto3.client('s3')
@@ -224,14 +228,17 @@ Resources:
                   s3.copy_object(CopySource=copy_source, Bucket=dest_bucket,
                         Key=key)
 
+
           def delete_objects(bucket, prefix, objects):
               s3 = boto3.client('s3')
               objects = {'Objects': [{'Key': prefix + o} for o in objects]}
               s3.delete_objects(Bucket=bucket, Delete=objects)
 
+
           def timeout(event, context):
               logging.error('Execution is about to time out, sending failure response to CloudFormation')
               cfnresponse.send(event, context, cfnresponse.FAILED, {}, None)
+
 
           def handler(event, context):
               # make sure we send a failure to CloudFormation if the function
@@ -239,6 +246,7 @@ Resources:
               timer = threading.Timer((context.get_remaining_time_in_millis()
                         / 1000.00) - 0.5, timeout, args=[event, context])
               timer.start()
+
               print('Received event: %s' % json.dumps(event))
               status = cfnresponse.SUCCESS
               try:
@@ -257,8 +265,67 @@ Resources:
                   timer.cancel()
                   cfnresponse.send(event, context, status, {}, None)
 
+  #######################################################
+  ### Lambda functions to be deployed
+  #######################################################
 
+  ### IndexData - function that indexes data to ES when object is added to S3
 
+  # Role for actual lambda functions to be deployed by the stack
+  IndexDataFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
+  # Lambda function deployed by the stack
+  # Notice the DependsOn key pointing to our CopyZips custom resource. By default, AWS CloudFormation will attempt
+  # to launch resources that are not dependent on each other in parallel, so this is required to be sure that the zips
+  # have already been copied before our Lambda function is created.
+  IndexDataFunction:
+    DependsOn: CopyZips
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Example
+      Handler: index_data.lambda_handler
+      Runtime: python2.7
+      Role: !GetAtt 'IndexDataFunctionRole.Arn'
+      Timeout: 300
+      Code:
+        S3Bucket: !Ref 'LambdaZipsBucket'
+        S3Key: !Sub '${LambdaSourceBucketPrefix}index_data.zip'
 
+  ### DeleteData - function that deletes data from ES when object is deleted from S3
 
+  DeleteDataFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  DeleteDataFunction:
+    DependsOn: CopyZips
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Example
+      Handler: delete_data.lambda_handler
+      Runtime: python2.7
+      Role: !GetAtt 'DeleteDataFunctionRole.Arn'
+      Timeout: 300
+      Code:
+        S3Bucket: !Ref 'LambdaZipsBucket'
+        S3Key: !Sub '${LambdaSourceBucketPrefix}delete_data.zip'
