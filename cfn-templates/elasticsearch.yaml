@@ -1,12 +1,30 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'mydemo'
 
+# PO - should have first
+# TODO: how to access ES cluster?
+
+# P1 - need to have
+# TODO: DataBucket - Lifecycle configuration
+# TODO: Lambda Indexing code end to end
+# TODO: investigate how to send data to bucket over TLS
+# TODO: power data in cloud - Ravish email
+
+# P2 - good to have for later
+# TODO: DataBucket - how about create a new bucket with new name? So that no need to enter name 3 times during stack creation: stack name, domain name, bucket name
+# TODO: lambda role policy is duplicated in both functions- move to a common policy file and reuse
+
+# TODO: how to update and test lambda functions in place in current stack?
+#When lambda functions are updated, you need to update the code using CLI (not CFN). Updating the zip file in the
+# S3 bucket which was used to create the lambda function is not sufficient, as this will not update the lambda function.
+
+
 
 Parameters:
   DomainName:
     Description: AWS Elasticsearch Domain Name
     Type: String
-  #KeyName:
+  #KeyName: # NEEDED?
   #  Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
   #  Type: 'AWS::EC2::KeyPair::KeyName'
   #  ConstraintDescription: Must be the name of an existing EC2 KeyPair.
@@ -16,7 +34,7 @@ Parameters:
   InstanceType:
     Description: AWS Elasticsearch Instance Type
     Type: String
-    Default: t2.micro.elasticsearch
+    Default: t2.small.elasticsearch
     AllowedValues:
       - i3.2xlarge.elasticsearch
       - m5.4xlarge.elasticsearch
@@ -83,6 +101,9 @@ Parameters:
 
   # Data Bucket
 
+  # Ideally CFN will assign a bucket name if not specified. But in our case, we need the bucket name string in advance,
+  # because to avoid a circular dependency failure, we create Lambda permissions which needs the bucket name to specify
+  # the permissions before the bucket itself is created.
   DataBucketName:
     Description: AWS S3 Bucket Name to be created as Elasticsearch datastore
     Type: String
@@ -128,6 +149,7 @@ Resources:
     Type: AWS::Elasticsearch::Domain
     Properties:
       DomainName: !Ref DomainName
+      ElasticsearchVersion: '7.1'
       ElasticsearchClusterConfig:
         DedicatedMasterEnabled: "true"
         InstanceCount: !Ref InstanceCount

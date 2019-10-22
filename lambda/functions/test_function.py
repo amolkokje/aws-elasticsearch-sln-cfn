@@ -8,6 +8,13 @@ import boto3
 aws_es_endpoint = 'search-ipesdomain-e2x7tyfwfiqxxmwy7a5s34ksqe.us-east-1.es.amazonaws.com'
 
 
+"""
+When lambda functions are updated, you need to update the code using CLI (not CFN)
+- Updating the zip file in the S3 bucket which was used to create the lambda function is not sufficient, as this will not
+update the lambda function
+38f9d34de269:packages kokjeak$ aws lambda update-function-code --function-name amolkokje-IndexDataFunction-1GEHGDIWJKRX1 --zip-file fileb://index_data.zip
+38f9d34de269:packages kokjeak$ aws lambda update-function-code --function-name amolkokje-DeleteDataFunction-11ZWWX599N9QM --zip-file fileb://delete_data.zip
+"""
 
 
 def elasticsearch_sign():

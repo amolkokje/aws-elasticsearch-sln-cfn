@@ -26,6 +26,14 @@ def es_init():
     except:
         print 'AMOL-: SIGN: Indice Query FAIL'
 
+    document = {
+        "title": "Moneyball",
+        "director": "Bennett Miller",
+        "year": "2011"
+    }
+    print 'AMOL: SIGN: Index Document={}'.format(es_client.index(index="movies", doc_type="doc", id="5", body=document))
+    print 'AMOL: SIGN: Indexed Document={}'.format(es_client.get(index="movies", doc_type="doc", id="5"))
+
 
 def lambda_handler(event, context):
     print 'AMOL: event={}'.format(event)

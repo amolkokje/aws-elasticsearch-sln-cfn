@@ -26,6 +26,9 @@ def es_init():
     except:
         print 'AMOL-: SIGN: Indice Query FAIL'
 
+    response = es_client.indices.delete(index='movies', ignore=[400, 404])
+    print 'AMOL: Delete Index Response = [{}]'.format(response)
+
 def lambda_handler(event, context):
     print 'AMOL: event={}'.format(event)
     print 'AMOL: context={}'.format(context)
