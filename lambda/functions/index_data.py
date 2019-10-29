@@ -40,29 +40,6 @@ INDEX_MAPPING = """
     }
     """
 
-def es_init():
-    service = 'es'
-    credentials = boto3.Session().get_credentials()
-    awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, os.environ['REGION'],
-                       service, session_token=credentials.token)
-
-    es_client = Elasticsearch( hosts=[{'host': os.environ['ES_ENDPOINT_HOST'],
-                                       'port': int(os.environ['ES_ENDPOINT_PORT'])}],
-                               http_auth=awsauth,
-                               use_ssl=True,
-                               verify_certs=True,
-                               connection_class=RequestsHttpConnection)
-    print 'AMOL-: SIGN: ES Init Done! Instance={}'.format(es_client)
-
-    try:
-        print 'AMOL-: SIGN: Indices={}'.format(es_client.indices.get_alias().keys())
-        print 'AMOL-: SIGN: Indice Query PASS'
-    except:
-        print 'AMOL-: SIGN: Indice Query FAIL'
-
-    response = es_client.indices.delete(index='movies', ignore=[400, 404])
-    print 'AMOL: Delete Index Response = [{}]'.format(response)
-
 def get_es_client():
     credentials = boto3.Session().get_credentials()
     awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, os.environ['REGION'],
@@ -123,7 +100,7 @@ def dump_env_vars(event, context):
 def lambda_handler(event, context):
 
     print '---> INDEX <---'
-    dump_env_vars(event, context)
+    #dump_env_vars(event, context)
 
     # init ES client
     es = get_es_client()

@@ -5,63 +5,7 @@ from elasticsearch import Elasticsearch, RequestsHttpConnection, helpers
 from requests_aws4auth import AWS4Auth
 import boto3
 
-# mapping for all indexes to be created
-INDEX_MAPPING = """
-    {
-        "mappings": {            
-            "dynamic": "strict",            
-            "properties": {
-                "object_key":{
-                    "type": "string"
-                },
-                "test_suite": {
-                    "type": "keyword"
-                },                    
-                "test_time": {
-                    "type": "float"
-                },
-                "timestamp":{
-                    "type": "date"
-                },
-                "kpi": {
-                    "type": "object",
-                    "dynamic": "true",
-                    "properties": {
-                        "val0": {
-                            "type": "float"
-                        },
-                        "val1": {
-                            "type": "float"
-                        }
-                    }
-                }                                        
-            }            
-        }
-    }
-    """
 
-def es_init():
-    service = 'es'
-    credentials = boto3.Session().get_credentials()
-    awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, os.environ['REGION'],
-                       service, session_token=credentials.token)
-
-    es_client = Elasticsearch( hosts=[{'host': os.environ['ES_ENDPOINT_HOST'],
-                                       'port': int(os.environ['ES_ENDPOINT_PORT'])}],
-                               http_auth=awsauth,
-                               use_ssl=True,
-                               verify_certs=True,
-                               connection_class=RequestsHttpConnection)
-    print 'AMOL-: SIGN: ES Init Done! Instance={}'.format(es_client)
-
-    try:
-        print 'AMOL-: SIGN: Indices={}'.format(es_client.indices.get_alias().keys())
-        print 'AMOL-: SIGN: Indice Query PASS'
-    except:
-        print 'AMOL-: SIGN: Indice Query FAIL'
-
-    response = es_client.indices.delete(index='movies', ignore=[400, 404])
-    print 'AMOL: Delete Index Response = [{}]'.format(response)
 
 def get_es_client():
     credentials = boto3.Session().get_credentials()
@@ -76,34 +20,21 @@ def get_es_client():
     print 'ES Init Done! ES={}'.format(es_client)
     return es_client
 
-def read_object(event):
+def get_index_key_from_object(event):
     s3 = boto3.client('s3')
     bucket = event['Records'][0]['s3']['bucket']['name']
     key = urllib.unquote_plus(event['Records'][0]['s3']['object']['key'].encode('utf8'))
     print 'BUCKET={}, KEY={}'.format(bucket, key)
+    index_name, object_key, _, _ = key.split('_')
+    return index_name, object_key
+    """
     response = s3.get_object(Bucket=bucket, Key=key)
     response_body = response['Body']
     object_data = response_body.read(amt=1024)
     print 'OBJECT_DATA={}'.format(object_data)
     return object_data
+    """
 
-def create_index(es, index_name, index_mapping):
-    es.indices.create(index=index_name, body=index_mapping)
-
-
-def bulk_import_json_data(object_data, doc_type):
-    # TODO: use generator implementation
-    bulk_data = []
-    for test_id, test_data in object_data.iteritems():
-        bulk_data.append(
-            {
-                "_index": test_data['index'],
-                "_type": doc_type,
-                "_id": uuid.uuid4(),  # must be unique ID - random number
-                "_source": test_data['test_data']
-            }
-        )
-    return bulk_data
 
 ############################################
 #### DEBUG ONLY
@@ -118,33 +49,34 @@ def dump_env_vars(event, context):
     print 'CONTEXT={}'.format(context)
 
 
+############################################
+#### MAIN
+############################################
+
 def lambda_handler(event, context):
 
     print '---> DELETE <---'
-    dump_env_vars(event, context)
+    #dump_env_vars(event, context)
 
     # init ES client
     es = get_es_client()
 
-    # create index with default mapping for any indices specified in the s3 object file
+    # get index name, object key from the S3 object file name
+    index_name, object_key = get_index_key_from_object(event)
+    print 'INDEX_NAME={}, OBJECT_KEY={}'.format(index_name, object_key)
 
-    # read from s3 object
-    object_data = read_object(event)
-    indices_list = list(set([ item['index'] for item in object_data.values() ]))
-    print 'INDICES={}'.format(indices_list)
+    # search for all docs with in the index having the specific object key
+    search_results = es.search(index=index_name,
+                               filter_path=["hits.hits._id"],  # get only the IDs of the objects
+                               body={"query": {"match": {"object_key": object_key}}}  # get only the objects having the key
+                               )
+    print 'SEARCH RESULTS={}'.format(search_results)
+    id_list = [ item["_id"] for item in search_results["hits"]["hits"]]
+    print 'ID LIST={}'.format(id_list)
 
-    existing_indices = es.indices.get_alias().keys()
-    print 'EXISTING_INDICES={}'.format(existing_indices)
-
-    # create all indices with default mapping, if does not exist
-    for index_name in indices_list:
-        if index_name not in existing_indices:
-            create_index(es, index_name, INDEX_MAPPING)
-
-    # bulk import all
-    print 'BULK IMPORT'
-    bulk_data = bulk_import_json_data(object_data, '_doc')
-    print helpers.bulk(es, bulk_data)
+    # delete all documents using IDs
+    for id in id_list:
+        print es.delete(index=index_name, id=id)
 
 
 if __name__ == '__main__':
