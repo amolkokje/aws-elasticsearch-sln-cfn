@@ -1,33 +1,29 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'mydemo'
+Description: 'my-aws-elasticsearch-deployment'
 
-# PO - should have first
-# TODO: how to access ES cluster?
+# STEPS TO DEPLOY
+# 1 - Create and upload Lambda packages using create_lambda_package.sh
+# 2 - Deploy CFN, with ARN of Cognito identity auth role
+# 3 - Go to AWS Console, and configure Cognito auth
 
 # P1 - need to have
 # TODO: DataBucket - Lifecycle configuration
-# TODO: Lambda Indexing code end to end
-# TODO: investigate how to send data to bucket over TLS
-# TODO: power data in cloud - Ravish email
 
 # P2 - good to have for later
 # TODO: DataBucket - how about create a new bucket with new name? So that no need to enter name 3 times during stack creation: stack name, domain name, bucket name
 # TODO: lambda role policy is duplicated in both functions- move to a common policy file and reuse
 
 # TODO: how to update and test lambda functions in place in current stack?
-#When lambda functions are updated, you need to update the code using CLI (not CFN). Updating the zip file in the
+# When lambda functions are updated, you need to update the code using CLI (not CFN). Updating the zip file in the
 # S3 bucket which was used to create the lambda function is not sufficient, as this will not update the lambda function.
-
+# Go to the folder where the .zip file is located and use the CLI to update the code. Example:
+# aws lambda update-function-code --function-name amolkokje-IndexDataFunction-1GEHGDIWJKRX1 --zip-file fileb://index_data.zip
 
 
 Parameters:
   DomainName:
     Description: AWS Elasticsearch Domain Name
     Type: String
-  #KeyName: # NEEDED?
-  #  Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
-  #  Type: 'AWS::EC2::KeyPair::KeyName'
-  #  ConstraintDescription: Must be the name of an existing EC2 KeyPair.
 
   # Elasticsearch configuration
 
@@ -72,6 +68,7 @@ Parameters:
       - c5.18xlarge.elasticsearch
       - i3.xlarge
     ConstraintDescription: Must be a valid Elasticsearch instance type.
+
   InstanceCount:
     Description: AWS Elasticsearch Instance Count
     Type: String
@@ -82,6 +79,7 @@ Parameters:
     ConstraintDescription: >-
       You must choose an even number of data nodes for a two Availability Zone
       deployment
+
   DedicatedMasterCount:
     Description: AWS Elasticsearch Dedicated Master Node Count
     Type: String
@@ -108,6 +106,7 @@ Parameters:
     Description: AWS S3 Bucket Name to be created as Elasticsearch datastore
     Type: String
     ConstraintDescription: Must be a unique S3 bucket name string
+
   DataBucketLifecycleTransition:
     Description: AWS S3 Bucket Data Transition Period in Days
     Type: Number
@@ -115,6 +114,7 @@ Parameters:
     MinValue: '30'
     MaxValue: '365'
     ConstraintDescription: Must be between 30 and 365 days.
+
   DataBucketLifecycleExpiration:
     Description: AWS S3 Bucket Data Expiration Period in Days
     Type: Number
@@ -132,6 +132,7 @@ Parameters:
     ConstraintDescription: >-
       Must be a valid bucket name containing Lambda functions, and in the same
       region.
+
   LambdaSourceBucketPrefix:
     Description: AWS S3 Bucket Prefix containing Lambda Functions
     Type: String
@@ -210,14 +211,14 @@ Resources:
                 Rules:
                   - Name: suffix
                     Value: .json
-      #LifecycleConfiguration:
-      #  Rules:
-      #    - Id: StandardIARule
-      #      Status: Enabled
-      #      ExpirationInDays: !Ref DataBucketLifecycleExpiration
-      #      Transitions:
-      #        - TransitionInDays: !Ref DataBucketLifecycleTransition
-      #          StorageClass: STANDARD_IA
+      LifecycleConfiguration:
+        Rules:
+          - Id: StandardIARule
+            Status: Enabled
+            ExpirationInDays: !Ref DataBucketLifecycleExpiration
+            Transitions:
+              - TransitionInDays: !Ref DataBucketLifecycleTransition
+                StorageClass: STANDARD_IA
 
 
   # Grants S3 bucket permission to invoke the lambda function. Need to specify the ARN of the bucket. Also, need

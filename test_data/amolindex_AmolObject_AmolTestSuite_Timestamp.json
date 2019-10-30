@@ -1,0 +1,44 @@
+{
+  "random_test_run_id_0": {
+    "index": "testindex",
+    "test_data": {
+      "object_key": "testobject",
+      "test_suite": "test_suite_0",
+      "test_time": 12.34,
+      "timestamp": "2019-10-28T19:42:37.203966",
+      "kpi": {
+        "val0": 10.00,
+        "val1": 20.00
+      }
+    }
+  },
+  "random_test_run_id_1": {
+    "index": "testindex",
+    "test_data": {
+      "object_key": "testobject",
+      "test_suite": "test_suite_1",
+      "test_time": 30.34,
+      "timestamp": "2019-10-28T19:47:35.347354",
+      "kpi": {
+        "val0": 15.0,
+        "val1": 15.0,
+        "val3": true
+      }
+    }
+  },
+  "random_test_run_id_3": {
+    "index": "testindex",
+    "test_data": {
+      "object_key": "testobject",
+      "test_suite": "test_suite_2",
+      "test_time": 30.34,
+      "timestamp": "2019-10-28T19:52:32.924042",
+      "kpi": {
+        "val0": 123.0,
+        "val1": 15.123,
+        "val2": 15.0,
+        "val3": true
+      }
+    }
+  }
+}
