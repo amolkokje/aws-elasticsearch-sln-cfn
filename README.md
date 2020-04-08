@@ -2,15 +2,22 @@
 Cloudformation templates and code to deploy secure AWS Elasticsearch solution
 
 
+## Deploy Stack:
+1. Create and upload Lambda packages using create_lambda_package.sh
+2. Deploy CFN, with ARN of Cognito identity auth role
+3. Go to AWS Console, and configure Cognito auth
 
+## Update Lambda functions:
+1. Change the code as needed.
+2. Go to the 'functions' folder and run command "sam build --template lambda_template.yaml".
+   This will create dir .aws-sam if it does not exist and add the packages there.
+3. Run the command "sam package --s3-bucket elasticsearch-lambda-functions".
+   This will package the lambda function code along with its dependencies and upload the package to the staging bucket.
+4. Since the previous step generates a random name, update the names of the deployed function pacakges using CLI.
+   Example: aws s3 mv s3://elasticsearch-lambda-functions/<NAME> s3://elasticsearch-lambda-functions/index_data_<NAME>
+5. Now, update the name of the lambda function Mapping in the Cloudformation template:
+   Mappings:
+     LambdaFunctionPackage:
+        IndexDataFunction:
+         Package: index_data_9a2b8349d1fd859e394dc43ae8d5d040
 
-## RULES FOR JSON DATA DOCUMENT:
-- A JSON doc should only have all documents going to the same "index", and same "object_key"
-    - If you need to send to the same index, but a different object key, then create a new document
-- JSON doc file name should have format: IndexName_ObjectKey_TestSuite_TimeStamp.json
-    - This is used to decode the metadata information in lambda function triggered on object remove/delete from S3. This is because lambda will be able to get the object name but will not be able to read the object on delete. So the Lambda code can use this info to search the data in ES using Index, Key, to get the IDs, and then delete them.
-- Each doc in the file should also have the ‘index’ and ‘object_key’ specified
-    - This metadata info will go with the indexed data, and can be used for searching the data, mainly for delete operations.
-- Relevant Elasticsearch Rules:
-    - Index name must be lowercase
-    - Always convert all int values to float in the JSON KPI dict. E.g. 20 should be 20.0

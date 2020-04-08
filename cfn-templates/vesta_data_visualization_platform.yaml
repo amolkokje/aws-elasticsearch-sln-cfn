@@ -1,31 +1,25 @@
+
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'my-aws-elasticsearch-deployment'
+Description: 'aws-elasticsearch-deployment'
 
-# STEPS TO DEPLOY
-# 1 - Create and upload Lambda packages using create_lambda_package.sh
-# 2 - Deploy CFN, with ARN of Cognito identity auth role
-# 3 - Go to AWS Console, and configure Cognito auth
+Mappings:
+  # Update this mapping when the lambda function rev/name is updated in staging bucket
+  LambdaFunctionPackage:
+     IndexDataFunction:
+      Package: index_data_2a22f36825fc834d5cec7078231babcd
+     DeleteDataFunction:
+      Package: delete_data_fb2380282db84bee208a02c6cd4fabcd
+     RetentionFunction:
+      Package: retention_d98e27341497b6cadb1fd75f1c93abcd
 
-# P1 - need to have
-# TODO: DataBucket - Lifecycle configuration
-
-# P2 - good to have for later
-# TODO: DataBucket - how about create a new bucket with new name? So that no need to enter name 3 times during stack creation: stack name, domain name, bucket name
-# TODO: lambda role policy is duplicated in both functions- move to a common policy file and reuse
-
-# TODO: how to update and test lambda functions in place in current stack?
-# When lambda functions are updated, you need to update the code using CLI (not CFN). Updating the zip file in the
-# S3 bucket which was used to create the lambda function is not sufficient, as this will not update the lambda function.
-# Go to the folder where the .zip file is located and use the CLI to update the code. Example:
-# aws lambda update-function-code --function-name amolkokje-IndexDataFunction-1GEHGDIWJKRX1 --zip-file fileb://index_data.zip
-
+  # Update this mapping with whitelisted indices
+  WhitelistedIndices:
+    All:
+      Indices: amol, kokje
 
 Parameters:
-  DomainName:
-    Description: AWS Elasticsearch Domain Name
-    Type: String
 
-  # Elasticsearch configuration
+  # ElasticSearch configuration
 
   InstanceType:
     Description: AWS Elasticsearch Instance Type
@@ -76,9 +70,7 @@ Parameters:
     AllowedValues:
       - '2'
       - '4'
-    ConstraintDescription: >-
-      You must choose an even number of data nodes for a two Availability Zone
-      deployment
+    ConstraintDescription: You must choose an even number of data nodes for a two AZ deployment
 
   DedicatedMasterCount:
     Description: AWS Elasticsearch Dedicated Master Node Count
@@ -97,41 +89,13 @@ Parameters:
     Type: String
     ConstraintDescription: Must be a valid ARN
 
-  # Data Bucket
-
-  # Ideally CFN will assign a bucket name if not specified. But in our case, we need the bucket name string in advance,
-  # because to avoid a circular dependency failure, we create Lambda permissions which needs the bucket name to specify
-  # the permissions before the bucket itself is created.
-  DataBucketName:
-    Description: AWS S3 Bucket Name to be created as Elasticsearch datastore
-    Type: String
-    ConstraintDescription: Must be a unique S3 bucket name string
-
-  DataBucketLifecycleTransition:
-    Description: AWS S3 Bucket Data Transition Period in Days
-    Type: Number
-    Default: '30'
-    MinValue: '30'
-    MaxValue: '365'
-    ConstraintDescription: Must be between 30 and 365 days.
-
-  DataBucketLifecycleExpiration:
-    Description: AWS S3 Bucket Data Expiration Period in Days
-    Type: Number
-    Default: '60'
-    MinValue: '1'
-    MaxValue: '365'
-    ConstraintDescription: Must be between 1 and 365 days.
-
   # Lambda Function
 
   LambdaSourceBucket:
     Description: AWS S3 Bucket in the Region which contains the Lambda Functions
     Type: String
     Default: elasticsearch-lambda-functions
-    ConstraintDescription: >-
-      Must be a valid bucket name containing Lambda functions, and in the same
-      region.
+    ConstraintDescription: Must be a valid bucket name containing Lambda functions, and in the same region.
 
   LambdaSourceBucketPrefix:
     Description: AWS S3 Bucket Prefix containing Lambda Functions
@@ -139,6 +103,44 @@ Parameters:
     Default: ''
     ConstraintDescription: Bucket prefix that contains the lambda functions.
 
+  # Retention Configuration
+
+  CloudWatchLogsRetentionDays:
+    Description: Retention days for CloudWatch Logs from Lambda Function Invocations
+    Type: Number
+    Default: '2'
+    MinValue: '1'
+    MaxValue: '5'
+    ConstraintDescription: Must be between 1 and 5 days.
+
+  DataRetentionDays:
+    Description: Retention days for Data Source
+    Type: Number
+    Default: '600'
+    MinValue: '200'
+    MaxValue: '600'
+    ConstraintDescription: Must be between 200 and 500 days.
+
+  RetentionRate:
+    Description: The rate (frequency) that determines when CloudWatch Events runs the rule that
+        triggers the Retention function (in minutes).
+    Default: rate(1440 minutes)
+    AllowedValues:
+      - rate(1440 minutes)
+      - rate(2280 minutes)
+      - rate(4320 minutes)
+    Type: String
+
+  # Deployment type for relevant management automation
+
+  DeploymentType:
+    Description: Stack Deployment Type. Acceptable Options are ENG or PROD
+    Type: String
+    Default: 'ENG'
+    AllowedValues:
+      - 'ENG'
+      - 'PROD'
+    ConstraintDescription: ENG or PROD
 
 Resources:
 
@@ -149,7 +151,7 @@ Resources:
   ElasticsearchDomain:
     Type: AWS::Elasticsearch::Domain
     Properties:
-      DomainName: !Ref DomainName
+      DomainName: !Ref AWS::StackName
       ElasticsearchVersion: '7.1'
       ElasticsearchClusterConfig:
         DedicatedMasterEnabled: "true"
@@ -172,7 +174,7 @@ Resources:
             Principal:
               AWS: !Ref 'IdentityPoolArn'
             Action: 'es:ESHttp*'
-            Resource: !Sub 'arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${DomainName}/*'
+            Resource: !Sub 'arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${AWS::StackName}/*'
             Condition:
               IpAddress:
                 aws:SourceIp:
@@ -194,7 +196,7 @@ Resources:
       - IndexDataLambdaInvokePermission
       - DeleteDataLambdaInvokePermission
     Properties:
-      BucketName: !Ref 'DataBucketName'
+      BucketName: !Ref AWS::StackName
       NotificationConfiguration:
         LambdaConfigurations:
           - Event: s3:ObjectCreated:*
@@ -211,15 +213,11 @@ Resources:
                 Rules:
                   - Name: suffix
                     Value: .json
-      LifecycleConfiguration:
-        Rules:
-          - Id: StandardIARule
-            Status: Enabled
-            ExpirationInDays: !Ref DataBucketLifecycleExpiration
-            Transitions:
-              - TransitionInDays: !Ref DataBucketLifecycleTransition
-                StorageClass: STANDARD_IA
 
+  # This bucket will contain all the documents, data for which will be purged from Elasticsearch. The move to this
+  # bucket will be managed using RetentionFunction Lambda
+  RetentionDataBucket:
+    Type: 'AWS::S3::Bucket'
 
   # Grants S3 bucket permission to invoke the lambda function. Need to specify the ARN of the bucket. Also, need
   # the account ID if its an AWS service.
@@ -229,7 +227,7 @@ Resources:
       Action: 'lambda:InvokeFunction'
       FunctionName: !Ref IndexDataFunction
       Principal: s3.amazonaws.com
-      SourceArn: !Sub 'arn:aws:s3:::${DataBucketName}'
+      SourceArn: !Sub 'arn:aws:s3:::${AWS::StackName}'
       SourceAccount: !Ref AWS::AccountId
 
   DeleteDataLambdaInvokePermission:
@@ -238,24 +236,25 @@ Resources:
       Action: 'lambda:InvokeFunction'
       FunctionName: !Ref DeleteDataFunction
       Principal: s3.amazonaws.com
-      SourceArn: !Sub 'arn:aws:s3:::${DataBucketName}'
+      SourceArn: !Sub 'arn:aws:s3:::${AWS::StackName}'
       SourceAccount: !Ref AWS::AccountId
 
 
 
-  #######################################################
-  ### Bucket which contains Lambda zips
-  #######################################################
+#  #######################################################
+#  ### Bucket which contains Lambda zips
+#  #######################################################
 
   # Bucket that will eventually contain lambda zips used for creating lambda function
   LambdaZipsBucket:
     Type: AWS::S3::Bucket
 
-  #######################################################
-  ### Logic for deploying Lambda functions
-  #######################################################
+#  #######################################################
+#  ### Logic for deploying Lambda functions
+#  #######################################################
 
   # Custom Resource: Used to copy all specified lambda zip packages in the 'Objects' list to the LambdaZipsBucket
+  # Specify Versions and Objects in the same order. The object version ID is available from s3
   CopyZips:
     Type: Custom::CopyZips
     Properties:
@@ -264,8 +263,9 @@ Resources:
       SourceBucket: !Ref 'LambdaSourceBucket'
       Prefix: !Ref 'LambdaSourceBucketPrefix'
       Objects:
-        - index_data.zip
-        - delete_data.zip
+        - !FindInMap [LambdaFunctionPackage, IndexDataFunction, Package]
+        - !FindInMap [LambdaFunctionPackage, DeleteDataFunction, Package]
+        - !FindInMap [LambdaFunctionPackage, RetentionFunction, Package]
 
   # CopyZips lambda function role
   # - basic execution role
@@ -302,8 +302,8 @@ Resources:
                   - !Sub 'arn:aws:s3:::${LambdaZipsBucket}/${LambdaSourceBucketPrefix}*'
 
 
-  # Lambda function used by the Custom-Resource CopyZips to copy over the lambda functions to bucket used by stack
-  # to create the lambda functions
+#  # Lambda function used by the Custom-Resource CopyZips to copy over the lambda functions to bucket used by stack
+#  # to create the lambda functions
   CopyZipsFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -320,61 +320,96 @@ Resources:
           import boto3
           import cfnresponse
 
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          s3 = boto3.client('s3')
 
           def copy_objects(source_bucket, dest_bucket, prefix, objects):
-              s3 = boto3.client('s3')
-              for o in objects:
-                  key = prefix + o
+              """
+              Copy specified objects from source to destination bucket
+              :param source_bucket: source bucket name
+              :param dest_bucket: destination bucket name
+              :param prefix: source bucket prefix
+              :param objects: list of objects to copy
+              :return: None
+              """
+              for item in objects:
+                  key = prefix + item
                   copy_source = {
+                      'CopySource': '/{}/{}'.format(source_bucket, key),
                       'Bucket': source_bucket,
                       'Key': key
                   }
-                  print('copy_source: %s' % copy_source)
-                  print('dest_bucket = %s'%dest_bucket)
-                  print('key = %s' %key)
-                  s3.copy_object(CopySource=copy_source, Bucket=dest_bucket,
-                        Key=key)
+                  logger.info('copy_source: [{}]'.format(copy_source))
+                  logger.info('dest_bucket: [{}]'.format(dest_bucket))
+                  logger.info('key: [{}]'.format(key))
+                  s3.copy_object(CopySource=copy_source, Bucket=dest_bucket, Key=key)
 
 
           def delete_objects(bucket, prefix, objects):
-              s3 = boto3.client('s3')
-              objects = {'Objects': [{'Key': prefix + o} for o in objects]}
+              """
+              Delete specified s3 objects
+              :param bucket: bucket name
+              :param prefix: bucket prefix
+              :param objects: list of object names
+              :return None
+              """
+              objects = {'Objects': [{'Key': prefix + item} for item in objects]}
               s3.delete_objects(Bucket=bucket, Delete=objects)
 
 
-          def timeout(event, context):
-              logging.error('Execution is about to time out, sending failure response to CloudFormation')
+          def timeout_handler(event, context):
+              """
+              Timeout handling
+              :param event: lambda function event
+              :param context: lambda function context
+              :return None
+              """
+              logger.error('Execution is about to time out, sending failure response to CloudFormation')
               cfnresponse.send(event, context, cfnresponse.FAILED, {}, None)
 
 
           def handler(event, context):
+              """
+              Lambda function handler
+              :param event: lambda function event
+              :param context: lambda function context
+              :return None
+              """
               # make sure we send a failure to CloudFormation if the function
               # is going to timeout
               timer = threading.Timer((context.get_remaining_time_in_millis()
-                        / 1000.00) - 0.5, timeout, args=[event, context])
+                        / 1000.00) - 0.5, timeout_handler, args=[event, context])
               timer.start()
 
-              print('Received event: %s' % json.dumps(event))
+              logger.info('Event: [{}]'.format(event))
               status = cfnresponse.SUCCESS
+
               try:
                   source_bucket = event['ResourceProperties']['SourceBucket']
                   dest_bucket = event['ResourceProperties']['DestBucket']
                   prefix = event['ResourceProperties']['Prefix']
                   objects = event['ResourceProperties']['Objects']
+                  logging.info('SourceBucket=[{}], DestinationBucket=[{}], Prefix=[{}], \
+                                                        Objects=[{}]'.format(
+                                                        source_bucket, dest_bucket, prefix, objects))
+
                   if event['RequestType'] == 'Delete':
                       delete_objects(dest_bucket, prefix, objects)
                   else:
                       copy_objects(source_bucket, dest_bucket, prefix, objects)
+
               except Exception as e:
-                  logging.error('Exception: %s' % e, exc_info=True)
+                  logger.error('Exception: %s' % e, exc_info=True)
                   status = cfnresponse.FAILED
+
               finally:
                   timer.cancel()
                   cfnresponse.send(event, context, status, {}, None)
 
-  #######################################################
-  ### Lambda functions to be deployed
-  #######################################################
+#  #######################################################
+#  ### Lambda functions to be deployed
+#  #######################################################
 
   ### IndexData - function that indexes data to ES when object is added to S3
 
@@ -415,10 +450,11 @@ Resources:
       Handler: index_data.lambda_handler
       Runtime: python2.7
       Role: !GetAtt 'IndexDataFunctionRole.Arn'
-      Timeout: 300
+      MemorySize: 3008
+      Timeout: 900
       Code:
         S3Bucket: !Ref 'LambdaZipsBucket'
-        S3Key: !Sub '${LambdaSourceBucketPrefix}index_data.zip'
+        S3Key: !Join [ '', [ !Ref LambdaSourceBucketPrefix, !FindInMap [LambdaFunctionPackage, IndexDataFunction, Package] ] ]
       Environment:
         Variables:
           'ES_ENDPOINT_HOST': !GetAtt ElasticsearchDomain.DomainEndpoint
@@ -459,9 +495,84 @@ Resources:
       Timeout: 300
       Code:
         S3Bucket: !Ref 'LambdaZipsBucket'
-        S3Key: !Sub '${LambdaSourceBucketPrefix}delete_data.zip'
+        S3Key: !Join [ '', [ !Ref LambdaSourceBucketPrefix, !FindInMap [LambdaFunctionPackage, DeleteDataFunction, Package] ] ]
       Environment:
         Variables:
           'ES_ENDPOINT_HOST': !GetAtt ElasticsearchDomain.DomainEndpoint
           'ES_ENDPOINT_PORT': '443'
           'REGION': !Sub '${AWS::Region}'
+
+  ### Retention - Function to manage data retention
+
+  RetentionFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: 'lambda-s3-logs-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action: 'logs:*'
+                Resource: '*'
+              - Effect: 'Allow'
+                Action: 's3:*'
+                Resource: '*'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSLambdaExecute
+
+  RetentionFunction:
+    DependsOn:
+      - CopyZips
+      - RetentionDataBucket
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: 'Lambda function to manage retention'
+      Handler: retention.lambda_handler
+      Runtime: python2.7
+      MemorySize: 3008
+      Timeout: 900
+      Role: !GetAtt 'RetentionFunctionRole.Arn'
+      Code:
+        S3Bucket: !Ref 'LambdaZipsBucket'
+        S3Key: !Join [ '', [ !Ref LambdaSourceBucketPrefix, !FindInMap [LambdaFunctionPackage, RetentionFunction, Package] ] ]
+      Environment:
+        Variables:
+          'CLOUDWATCH_LOGS_RETENTION_DAYS': '2'
+          'S3_RETENTION_DAYS': !Ref DataRetentionDays
+          'S3_ENG_RETENTION_DAYS': '30'
+          'S3_RETENTION_BUCKET_NAME': !Ref RetentionDataBucket
+          'DATA_BUCKET_NAME': !Ref DataBucket
+          'WHITELISTED_INDICES': !FindInMap [WhitelistedIndices, All, Indices]
+          'DEPLOYMENT': !Ref DeploymentType
+
+  # Scheduling Mechanism using Cloudwatch rules to run RetentionFunction at periodic intervals
+
+  RetentionFunctionSchedule:
+    Type: 'AWS::Events::Rule'
+    DependsOn:
+      - RetentionFunction
+    Properties:
+      Description: Schedule at which the Retention Lambda function runs
+      ScheduleExpression: !Ref RetentionRate
+      State: ENABLED
+      Targets:
+        - Arn: !Sub ${RetentionFunction.Arn}
+          Id: RetentionFunctionSchedule
+
+  RetentionFunctionSchedulePermission:
+    Type: 'AWS::Lambda::Permission'
+    DependsOn:
+      - RetentionFunction
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Sub ${RetentionFunction.Arn}
+      Principal: 'events.amazonaws.com'
+      SourceArn: !Sub ${RetentionFunctionSchedule.Arn}

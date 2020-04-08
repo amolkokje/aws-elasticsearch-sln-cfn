@@ -1,3 +1,4 @@
+
 import os
 import urllib
 import uuid
@@ -17,17 +18,11 @@ INDEX_MAPPING = """
     {
         "mappings": {
             "date_detection": true,
-            "numeric_detection": false,    
+            "numeric_detection": true,
             "dynamic": "strict",            
             "properties": {
                 "object_key":{
                     "type": "keyword"
-                },
-                "test_suite": {
-                    "type": "keyword"
-                },                    
-                "test_time": {
-                    "type": "float"
                 },
                 "timestamp":{
                     "type": "date"
@@ -47,7 +42,7 @@ def get_es_client():
     method that authenticates with ES and returns a handle
     :return: ES client handle
     """
-    # get cres from rols
+    # get creds from role
     credentials = boto3.Session().get_credentials()
     # generate auth
     awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, os.environ['REGION'],
@@ -106,12 +101,12 @@ def bulk_import_json_data(object_data, doc_type):
     :param doc_type: string containing type
     :return: generator
     """
-    for test_id, test_data in object_data.iteritems():
+    for id_data, data in object_data.iteritems():
         yield {
-            "_index": test_data['index'],
+            "_index": data['index'],
             "_type": doc_type,
-            "_id": uuid.uuid4(),  # must be unique ID - random number
-            "_source": test_data['test_data']
+            "_id": id_data,
+            "_source": data['data']
         }
 
 
@@ -128,9 +123,9 @@ def dump_env_vars(event, context):
     """
     logging.info('Environment Vars:')
     for k, v in os.environ.iteritems():
-        print '{}: [{}]'.format(k, v)
-    logging.info('Event={}'.format(event))
-    logging.info('Context={}'.format(context))
+        logging.info('{}: [{}]'.format(k, v))
+    logging.info('Event=[{}]'.format(event))
+    logging.info('Context=[{}]'.format(context))
 
 
 ############################################

@@ -1,4 +1,4 @@
-import time
+
 import os
 import urllib
 import boto3
@@ -15,7 +15,7 @@ def get_es_client():
     method that authenticates with ES and returns a handle
     :return: ES client handle
     """
-    # get cres from rols
+    # get creds from role
     credentials = boto3.Session().get_credentials()
     # generate auth
     awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, os.environ['REGION'],
@@ -55,29 +55,14 @@ def delete_loop(es, index_name, object_key):
     :param object_key: object key to look for
     :return: None
     """
-    while True:
-        search_results = es.search(index=index_name,
-                                   filter_path=["hits.hits._id"],  # get only the IDs of the objects
-                                   body={"query": {"match": {"object_key": object_key}}}
-                                   # get only the objects having the key
-                                   )
-        logging.info('Search results = [{}]'.format(search_results))
-        try:
-            docs = search_results['hits']['hits']
-            if len(docs) == 0:
-                logging.info('Done deleting all the docs!')
-                return
-
-            id_list = [item["_id"] for item in docs]
-            logging.info('Doc ID List = [{}]'.format(id_list))
-            for id in id_list:
-                resp = es.delete(index=index_name, id=id)
-                logging.info('Delete Response = [{}]'.format(resp))
-        except Exception as ex:
-            logging.info('No Search Hits, Document with ID not found (probably deleted), or hit an Unkown Exception. '
-                         'Return! Exception = [{}]'.format(ex.message))
-            return
-        time.sleep(3)
+    delete_results = es.delete_by_query(index=index_name, body={
+            "query": {
+                "match": {
+                    "object_key": object_key
+                }
+            }
+        })
+    logging.info('Delete results = [{}]'.format(delete_results))
 
 
 ############################################
